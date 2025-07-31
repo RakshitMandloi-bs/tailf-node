@@ -1,0 +1,26 @@
+{
+  "name": "tail-f",
+  "version": "1.0.0",
+  "description": "A log watching solution similar to tail -f command, with real-time web interface",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js & node log-simulator.js",
+    "dev": "node server.js",
+    "test": "mocha test/*.test.js",
+    "test:watch": "mocha test/*.test.js --watch",
+    "simulate": "node log-simulator.js",
+    "simulate:custom": "node log-simulator.js logs/custom.log 1000"
+  },
+  "keywords": ["tail", "log", "monitoring", "websocket", "real-time"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "chai": "^5.2.1",
+    "chokidar": "^4.0.3",
+    "express": "^5.1.0",
+    "mocha": "^11.7.1",
+    "sinon": "^21.0.0",
+    "ws": "^8.18.3"
+  }
+}

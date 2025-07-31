@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tail-F Log Viewer</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #1a1a1a;
+            color: #00ff00;
+            margin: 0;
+            padding: 20px;
+            line-height: 1.4;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #00ff00;
+            text-align: center;
+            margin-bottom: 30px;
+            text-shadow: 0 0 10px #00ff00;
+        }
+
+        .controls {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #444;
+        }
+
+        .file-selector {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        select, input, button {
+            padding: 8px 12px;
+            border: 1px solid #555;
+            background: #333;
+            color: #00ff00;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+
+        button {
+            background: #444;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #555;
+        }
+
+        button:disabled {
+            background: #222;
+            color: #666;
+            cursor: not-allowed;
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+
+        .status.info {
+            background: #0066cc;
+            color: white;
+        }
+
+        .status.error {
+            background: #cc0000;
+            color: white;
+        }
+
+        .status.success {
+            background: #00aa00;
+            color: white;
+        }
+
+        .log-container {
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 8px;
+            height: 60vh;
+            overflow-y: auto;
+            padding: 15px;
+            font-size: 14px;
+            position: relative;
+        }
+
+        .log-line {
+            margin: 2px 0;
+            padding: 2px 0;
+            border-bottom: 1px solid #111;
+        }
+
+        .log-line:hover {
+            background: #222;
+        }
+
+        .log-line.error {
+            color: #ff6666;
+        }
+
+        .log-line.warn {
+            color: #ffaa00;
+        }
+
+        .log-line.info {
+            color: #66aaff;
+        }
+
+        .timestamp {
+            color: #888;
+            margin-right: 10px;
+        }
+
+        .controls-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .auto-scroll {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .connection-status {
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .connection-status.connected {
+            background: #00aa00;
+            color: white;
+        }
+
+        .connection-status.disconnected {
+            background: #cc0000;
+            color: white;
+        }
+
+        .connection-status.connecting {
+            background: #ffaa00;
+            color: black;
+        }
+
+        .log-empty {
+            color: #666;
+            text-align: center;
+            padding: 50px;
+            font-style: italic;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .loading::after {
+            content: "...";
+            animation: loading 1s infinite;
+        }
+
+        @keyframes loading {
+            0% { content: ""; }
+            25% { content: "."; }
+            50% { content: ".."; }
+            75% { content: "..."; }
+            100% { content: ""; }
+        }
+
+        /* Scrollbar styling */
+        .log-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .log-container::-webkit-scrollbar-track {
+            background: #111;
+        }
+
+        .log-container::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+
+        .log-container::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📋 Tail-F Log Viewer</h1>
+        
+        <div class="controls">
+            <div class="file-selector">
+                <label for="logFile">Select Log File:</label>
+                <select id="logFile">
+                    <option value="">-- Select a log file --</option>
+                </select>
+                <input type="text" id="customPath" placeholder="Or enter custom path..." />
+                <button id="watchBtn" disabled>Watch File</button>
+                <button id="stopBtn" disabled>Stop Watching</button>
+            </div>
+            
+            <div class="controls-row">
+                <div class="auto-scroll">
+                    <input type="checkbox" id="autoScroll" checked>
+                    <label for="autoScroll">Auto-scroll</label>
+                </div>
+                <button id="clearBtn">Clear Log</button>
+                <div class="connection-status" id="connectionStatus">Disconnected</div>
+            </div>
+        </div>
+
+        <div id="status" class="status" style="display: none;"></div>
+
+        <div class="log-container" id="logContainer">
+            <div class="log-empty">No log file selected. Choose a file to start watching.</div>
+        </div>
+    </div>
+
+    <script>
+        class TailFClient {
+            constructor() {
+                this.ws = null;
+                this.isConnected = false;
+                this.currentFile = null;
+                this.autoScroll = true;
+                this.lineCount = 0;
+                
+                this.initializeElements();
+                this.setupEventListeners();
+                this.connect();
+                this.loadLogFiles();
+            }
+
+            initializeElements() {
+                this.logFileSelect = document.getElementById('logFile');
+                this.customPathInput = document.getElementById('customPath');
+                this.watchBtn = document.getElementById('watchBtn');
+                this.stopBtn = document.getElementById('stopBtn');
+                this.clearBtn = document.getElementById('clearBtn');
+                this.autoScrollCheckbox = document.getElementById('autoScroll');
+                this.statusDiv = document.getElementById('status');
+                this.logContainer = document.getElementById('logContainer');
+                this.connectionStatus = document.getElementById('connectionStatus');
+            }
+
+            setupEventListeners() {
+                this.watchBtn.addEventListener('click', () => this.startWatching());
+                this.stopBtn.addEventListener('click', () => this.stopWatching());
+                this.clearBtn.addEventListener('click', () => this.clearLog());
+                this.autoScrollCheckbox.addEventListener('change', (e) => {
+                    this.autoScroll = e.target.checked;
+                });
+
+                this.logFileSelect.addEventListener('change', (e) => {
+                    this.customPathInput.value = '';
+                    this.updateWatchButton();
+                });
+
+                this.customPathInput.addEventListener('input', (e) => {
+                    if (e.target.value) {
+                        this.logFileSelect.value = '';
+                    }
+                    this.updateWatchButton();
+                });
+
+                this.customPathInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.startWatching();
+                    }
+                });
+            }
+
+            updateWatchButton() {
+                const hasSelection = this.logFileSelect.value || this.customPathInput.value.trim();
+                this.watchBtn.disabled = !hasSelection || !this.isConnected;
+            }
+
+            connect() {
+                this.updateConnectionStatus('connecting');
+                
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}`;
+                
+                this.ws = new WebSocket(wsUrl);
+
+                this.ws.onopen = () => {
+                    this.isConnected = true;
+                    this.updateConnectionStatus('connected');
+                    this.showStatus('Connected to server', 'success');
+                    this.updateWatchButton();
+                };
+
+                this.ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.handleMessage(data);
+                    } catch (error) {
+                        console.error('Error parsing message:', error);
+                    }
+                };
+
+                this.ws.onclose = () => {
+                    this.isConnected = false;
+                    this.updateConnectionStatus('disconnected');
+                    this.showStatus('Connection lost. Attempting to reconnect...', 'error');
+                    this.updateWatchButton();
+                    
+                    // Attempt to reconnect after 3 seconds
+                    setTimeout(() => this.connect(), 3000);
+                };
+
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.showStatus('Connection error', 'error');
+                };
+            }
+
+            handleMessage(data) {
+                switch (data.type) {
+                    case 'line':
+                        this.addLogLine(data.data);
+                        break;
+                    case 'status':
+                        this.showStatus(data.message, 'info');
+                        break;
+                    case 'error':
+                        this.showStatus(data.message, 'error');
+                        break;
+                    default:
+                        console.log('Unknown message type:', data.type);
+                }
+            }
+
+            addLogLine(line) {
+                const logLine = document.createElement('div');
+                logLine.className = 'log-line';
+                
+                // Add timestamp
+                const timestamp = new Date().toLocaleTimeString();
+                const timestampSpan = document.createElement('span');
+                timestampSpan.className = 'timestamp';
+                timestampSpan.textContent = `[${timestamp}]`;
+                
+                // Detect log level and apply styling
+                const logLevel = this.detectLogLevel(line);
+                if (logLevel) {
+                    logLine.classList.add(logLevel);
+                }
+                
+                logLine.appendChild(timestampSpan);
+                logLine.appendChild(document.createTextNode(line));
+                
+                // Remove empty message if it exists
+                const emptyMessage = this.logContainer.querySelector('.log-empty');
+                if (emptyMessage) {
+                    emptyMessage.remove();
+                }
+                
+                this.logContainer.appendChild(logLine);
+                this.lineCount++;
+                
+                // Auto-scroll if enabled
+                if (this.autoScroll) {
+                    this.logContainer.scrollTop = this.logContainer.scrollHeight;
+                }
+                
+                // Limit log lines to prevent memory issues (keep last 1000 lines)
+                if (this.lineCount > 1000) {
+                    const firstLine = this.logContainer.querySelector('.log-line');
+                    if (firstLine) {
+                        firstLine.remove();
+                        this.lineCount--;
+                    }
+                }
+            }
+
+            detectLogLevel(line) {
+                const upperLine = line.toUpperCase();
+                if (upperLine.includes('ERROR') || upperLine.includes('FATAL')) {
+                    return 'error';
+                } else if (upperLine.includes('WARN')) {
+                    return 'warn';
+                } else if (upperLine.includes('INFO')) {
+                    return 'info';
+                }
+                return null;
+            }
+
+            startWatching() {
+                const filePath = this.customPathInput.value.trim() || this.logFileSelect.value;
+                
+                if (!filePath) {
+                    this.showStatus('Please select a log file', 'error');
+                    return;
+                }
+
+                if (!this.isConnected) {
+                    this.showStatus('Not connected to server', 'error');
+                    return;
+                }
+
+                this.currentFile = filePath;
+                this.clearLog();
+                
+                this.ws.send(JSON.stringify({
+                    type: 'watch',
+                    filePath: filePath
+                }));
+
+                this.watchBtn.disabled = true;
+                this.stopBtn.disabled = false;
+                this.showStatus(`Watching ${filePath}...`, 'info');
+            }
+
+            stopWatching() {
+                if (this.currentFile && this.isConnected) {
+                    this.ws.send(JSON.stringify({
+                        type: 'unwatch',
+                        filePath: this.currentFile
+                    }));
+                }
+
+                this.currentFile = null;
+                this.watchBtn.disabled = false;
+                this.stopBtn.disabled = true;
+                this.updateWatchButton();
+                this.showStatus('Stopped watching file', 'info');
+            }
+
+            clearLog() {
+                this.logContainer.innerHTML = '';
+                this.lineCount = 0;
+            }
+
+            showStatus(message, type = 'info') {
+                this.statusDiv.textContent = message;
+                this.statusDiv.className = `status ${type}`;
+                this.statusDiv.style.display = 'block';
+                
+                // Hide status after 5 seconds
+                setTimeout(() => {
+                    this.statusDiv.style.display = 'none';
+                }, 5000);
+            }
+
+            updateConnectionStatus(status) {
+                this.connectionStatus.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+                this.connectionStatus.className = `connection-status ${status}`;
+            }
+
+            async loadLogFiles() {
+                try {
+                    const response = await fetch('/api/logs');
+                    const files = await response.json();
+                    
+                    // Clear existing options except the default one
+                    const defaultOption = this.logFileSelect.querySelector('option[value=""]');
+                    this.logFileSelect.innerHTML = '';
+                    this.logFileSelect.appendChild(defaultOption);
+                    
+                    files.forEach(file => {
+                        const option = document.createElement('option');
+                        option.value = file.path;
+                        option.textContent = file.name;
+                        this.logFileSelect.appendChild(option);
+                    });
+                    
+                    if (files.length === 0) {
+                        this.showStatus('No log files found in logs directory', 'info');
+                    }
+                } catch (error) {
+                    console.error('Error loading log files:', error);
+                    this.showStatus('Error loading log files', 'error');
+                }
+            }
+        }
+
+        // Initialize the client when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new TailFClient();
+        });
+    </script>
+</body>
+</html>
