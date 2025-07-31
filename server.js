@@ -216,39 +216,59 @@ class TailFServer {
 
     // Async method to get the last N lines from a file without loading entire file
     async getLastLines(filePath, lineCount) {
-        // Return a Promise that resolves with the last N lines
         return new Promise((resolve, reject) => {
-            // Array to store lines as they are read
-            const lines = [];
-            // Create a readable stream for the file
-            const stream = createReadStream(filePath);
-            // Create readline interface for line-by-line processing
-            const rl = createInterface({
-                input: stream,
-                crlfDelay: Infinity  // Handle Windows line endings properly
-            });
+            fs.stat(filePath, (err, stats) => {
+                if (err) { return reject(err); }
 
-            // Handle each line as it's read
-            rl.on('line', (line) => {
-                // Add the line to our array
-                lines.push(line);
-                // Keep only the last N lines (sliding window approach)
-                if (lines.length > lineCount) {
-                    // Remove first element to keep only last N lines
-                    lines.shift(); // Remove first element to keep only last N lines
+                const CHUNK_SIZE = 8192; // 8KB
+                let fd;
+                try {
+                    fs.open(filePath, 'r', (err, fileDescriptor) => {
+                        if (err) { return reject(err); }
+                        fd = fileDescriptor;
+                        
+                        let buffer = Buffer.alloc(CHUNK_SIZE);
+                        let lines = [];
+                        let position = stats.size;
+                        let leftover = '';
+
+                        const readPreviousChunk = () => {
+                            if (position === 0) {
+                                fs.close(fd, () => {});
+                                if (leftover) lines.unshift(leftover);
+                                return resolve(lines.slice(-lineCount));
+                            }
+
+                            const size = Math.min(position, CHUNK_SIZE);
+                            position -= size;
+
+                            fs.read(fd, buffer, 0, size, position, (err, bytesRead) => {
+                                if (err) {
+                                    fs.close(fd, () => {});
+                                    return reject(err);
+                                }
+
+                                const chunk = buffer.slice(0, bytesRead).toString('utf8');
+                                const chunkLines = (chunk + leftover).split(/\r\n|\n|\r/);
+                                leftover = chunkLines.shift() || '';
+
+                                for (let i = chunkLines.length - 1; i >= 0; i--) {
+                                    lines.unshift(chunkLines[i]);
+                                }
+
+                                if (lines.length >= lineCount) {
+                                    fs.close(fd, () => {});
+                                    return resolve(lines.slice(-lineCount));
+                                }
+                                readPreviousChunk();
+                            });
+                        };
+                        readPreviousChunk();
+                    });
+                } catch (e) {
+                    if (fd) fs.close(fd, () => {});
+                    reject(e);
                 }
-            });
-
-            // Handle when file reading is complete
-            rl.on('close', () => {
-                // Resolve the promise with the collected lines
-                resolve(lines);
-            });
-
-            // Handle any errors during file reading
-            rl.on('error', (error) => {
-                // Reject the promise with the error
-                reject(error);
             });
         });
     }
